@@ -10,13 +10,17 @@ from openpyxl.styles import PatternFill
 # ==============================
 st.set_page_config(page_title="COD Compare", layout="wide")
 
-logo_url = "https://raw.githubusercontent.com/Uthraa-18/cod-compare-app/refs/heads/main/image.png"
+logo_url = "https://raw.githubusercontent.com/<username>/<repo>/main/<path>/renault_logo.png"
 
 st.markdown(f"""
 <style>
 
-    /* Create a transparent background layer */
-    .stApp::before {{
+    /* Add background only to main container */
+    .st-emotion-cache-18ni7ap {{
+        position: relative;
+    }}
+
+    .st-emotion-cache-18ni7ap::before {{
         content: "";
         position: fixed;
         top: 0;
@@ -27,12 +31,13 @@ st.markdown(f"""
         background-size: 40%;
         background-repeat: no-repeat;
         background-position: center;
-        opacity: 0.5;   /* <-- 50% transparency only for image */
-        z-index: -1;    /* Behind everything */
+        opacity: 0.5;      /* Only the image is transparent */
+        z-index: -1;       /* Push behind app */
     }}
 
 </style>
 """, unsafe_allow_html=True)
+
 
 
 st.markdown("""
