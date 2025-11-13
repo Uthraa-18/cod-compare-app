@@ -16,9 +16,8 @@ st.markdown(f"""
 <style>
 .corner-logo {{
     position: fixed;
-    top: 20px;
+    top: 10px;
     right: 20px;
-    width: 120px;           /* adjust size */
     opacity: 0.5;           /* 50% transparency */
     z-index: 9999;          /* stay above everything */
 }}
