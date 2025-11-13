@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import os, io, re, unicodedata
+from openpyxl import Workbook
+from openpyxl.styles import PatternFill
 
 # ==============================
 # Style & helpers (UI)
@@ -101,14 +103,9 @@ def find_stacked_anchor_vertical(df, words, max_gap=10):
                 found = False
                 for rr in range(rcur+1, min(R, rcur+1+max_gap)):
                     if w in norm(df.iat[rr,c]):
-                        rcur = rr
-                        found = True
-                        break
-                if not found:
-                    ok = False
-                    break
-            if ok:
-                return rcur, c
+                        rcur = rr; found = True; break
+                if not found: ok=False; break
+            if ok: return rcur, c
     return None, None
 
 def first_number_below(df, start_row, col, right_span=12, down_rows=4):
@@ -117,29 +114,23 @@ def first_number_below(df, start_row, col, right_span=12, down_rows=4):
         for cc in range(col, min(C, col+right_span)):
             s = "" if pd.isna(df.iat[rr,cc]) else str(df.iat[rr,cc])
 
-            # ± pattern
             m = RE_PM.search(s)
             if m:
                 v = to_float(m.group(1))
-                if v is not None: 
-                    return v, rr, cc
+                if v is not None: return v, rr, cc
 
-            # ± + number in next cell
             if norm(s) in {"±","+/-"}:
                 for cc2 in range(cc+1, min(C, cc+4)):
                     s2 = "" if pd.isna(df.iat[rr,cc2]) else str(df.iat[rr,cc2])
                     m2 = RE_NUM.search(s2)
                     if m2:
                         v = to_float(m2.group(0))
-                        if v is not None: 
-                            return v, rr, cc2
+                        if v is not None: return v, rr, cc2
 
-            # plain number
             m3 = RE_NUM.search(s)
             if m3:
                 v = to_float(m3.group(0))
-                if v is not None:
-                    return v, rr, cc
+                if v is not None: return v, rr, cc
     return None, None, None
 
 def two_signed_values_below_same_column(df, start_row, col, max_rows=8):
@@ -147,19 +138,16 @@ def two_signed_values_below_same_column(df, start_row, col, max_rows=8):
     vals=[]
     for rr in range(start_row+1, min(R, start_row+1+max_rows)):
         s = "" if pd.isna(df.iat[rr,col]) else str(df.iat[rr,col]).strip()
-
         if RE_SIGNED.match(s):
             x = to_float(s)
-            if x is not None:
-                vals.append(x)
-
-        elif norm(s) in {"±","+/-"} and col+1 < df.shape[1]:
-            s2 = "" if pd.isna(df.iat[rr,col+1]) else str(df.iat[rr,col+1]).strip()
-            if RE_NUM.match(s2):
-                x = to_float(s2)
-                if x:
-                    vals.append(+abs(x))
-                    vals.append(-abs(x))
+            if x is not None: vals.append(x)
+        elif norm(s) in {"±","+/-"}:
+            if col+1 < df.shape[1]:
+                s2 = "" if pd.isna(df.iat[rr,col+1]) else str(df.iat[rr,col+1])
+                if RE_NUM.match(s2):
+                    x = to_float(s2)
+                    if x:
+                        vals.append(+abs(x)); vals.append(-abs(x))
 
     for v in vals:
         if -v in vals:
@@ -171,15 +159,13 @@ def two_signed_values_below_same_column(df, start_row, col, max_rows=8):
 # ==============================
 def row_numbers(df, r):
     nums=[]
-    row=df.iloc[r,:].tolist()
+    row = df.iloc[r,:].tolist()
 
-    # ± style
     for i,v in enumerate(row):
         s = "" if pd.isna(v) else str(v)
         for m in RE_PM.findall(s):
             x = to_float(m)
             if x: nums += [+abs(x), -abs(x)]
-
         if norm(s) in {"±","+/-"}:
             for j in range(i+1, min(len(row), i+4)):
                 s2 = "" if pd.isna(row[j]) else str(row[j])
@@ -187,13 +173,11 @@ def row_numbers(df, r):
                     x = to_float(m2)
                     if x: nums += [+abs(x), -abs(x)]
 
-    # plain numbers
     for v in row:
         s = "" if pd.isna(v) else str(v)
         for m in RE_NUM.findall(s):
             x = to_float(m)
-            if x is not None:
-                nums.append(x)
+            if x is not None: nums.append(x)
 
     return nums
 
@@ -221,12 +205,12 @@ def approx_equal(a,b,tol):
     return abs(a-b) <= tol
 
 def contains_value_eps(nums, val, tol):
-    return any( approx_equal(x,val,tol) for x in nums )
+    return any(approx_equal(x,val,tol) for x in nums)
 
 def contains_pm_pair_eps(nums, mag, tol):
     return (
-        any( approx_equal(x,+abs(mag),tol) for x in nums ) and
-        any( approx_equal(x,-abs(mag),tol) for x in nums )
+        any(approx_equal(x,+abs(mag),tol) for x in nums) and
+        any(approx_equal(x,-abs(mag),tol) for x in nums)
     )
 
 def fmt_pm(m):
@@ -239,7 +223,7 @@ def fmt_pm(m):
 st.title("🔎 COD Nominal & Tolerance Comparison")
 
 header_with_tip("What this does",
-                "Extracts Nominal & Tolerance from COD and compares PDJ/TCM rows for the same key.")
+                "Extracts Nominal & Tolerance from COD and compares PDJ/TCM rows.")
 
 st.caption("Epsilon allows 1.41 ≈ 1.4")
 
@@ -251,27 +235,24 @@ with st.container():
     st.markdown("</div>", unsafe_allow_html=True)
 
 header_with_tip("Upload COD workbook (.xls/.xlsx)",
-                "Reads Codification (below label), Nominal, and Tolerance.")
+                "Reads Codification, Nominal, and Tolerance.")
 cod_file = st.file_uploader("", type=["xls","xlsx"], key="cod")
 
 header_with_tip("Upload PDJ/TCM/others",
-                "PDJ + TCM → only check the key row. Others → row first, then sheet.")
+                "PDJ + TCM only check the key row. Others row-first then sheet.")
 other_files = st.file_uploader("", type=["xls","xlsx"], accept_multiple_files=True, key="others")
-
 
 # ==============================
 # Main logic
 # ==============================
 if cod_file and other_files:
 
-    # Read COD
     cod_bytes = cod_file.read(); cod_file.seek(0)
     cod_sheets = read_all_sheets(cod_file.name, cod_bytes)
 
-    # ---- 1) Extract Codification
     s_cod, key_value, _, _ = find_codification_value_below(cod_sheets,"codification")
     if not key_value:
-        st.error("Could not find Codification value below label.")
+        st.error("Could not find Codification value.")
         st.stop()
 
     st.markdown(f"<div class='subtle'>🔑 Compared Key: <code>{key_value}</code></div>",
@@ -279,10 +260,9 @@ if cod_file and other_files:
 
     df_cod = cod_sheets[s_cod]
 
-    # ---- 2) Extract Nominal
     nr, nc = find_stacked_anchor_vertical(df_cod, ["objectif","nominal","jeu"])
     if nr is None:
-        st.error("Cannot find 'Objectif → Nominal → Jeu'")
+        st.error("Cannot find Objectif → Nominal → Jeu")
         st.stop()
 
     cod_nominal, _, _ = first_number_below(df_cod, nr, nc)
@@ -290,10 +270,9 @@ if cod_file and other_files:
         st.error("Could not extract Nominal.")
         st.stop()
 
-    # ---- 3) Extract Tolerance
     tr, tc = find_stacked_anchor_vertical(df_cod, ["calcul","disp"])
     if tr is None:
-        st.error("Cannot find 'Calcul → Disp.'")
+        st.error("Cannot find Calcul → Disp.")
         st.stop()
 
     posv, negv = two_signed_values_below_same_column(df_cod, tr, tc)
@@ -327,14 +306,11 @@ if cod_file and other_files:
 
         for sname, df in sheets.items():
 
-            # Key positions in this sheet
             pos = find_key_positions(df, key_value)
-            if not pos:
-                continue
+            if not pos: continue
 
             for (r, _) in pos:
 
-                # PDJ and TCM both check ONLY the row of key
                 if is_pdj or is_tcm:
                     nums = row_numbers(df, r)
                 else:
@@ -346,7 +322,7 @@ if cod_file and other_files:
                         nums = sheet_numbers(df)
 
                 nominal_ok = contains_value_eps(nums, cod_nominal, eps)
-                tol_ok = contains_pm_pair_eps(nums, tol_mag, eps)
+                tol_ok     = contains_pm_pair_eps(nums, tol_mag, eps)
 
                 matched=[]
                 if nominal_ok: matched.append(f"{ref_nom_disp}")
@@ -357,7 +333,6 @@ if cod_file and other_files:
                     "File": tag,
                     "Sheet": sname,
                     "Key Row": r+1,
-                    "All Numbers": nums,           # used later for unmatched
                     "Reference Nominal": ref_nom_disp,
                     "Reference Tolerance": fmt_pm(ref_tol_disp),
                     "Nominal Found": "Yes" if nominal_ok else "No",
@@ -372,41 +347,50 @@ if cod_file and other_files:
 
         df_out = pd.DataFrame(results)
 
-        # ----- Build Unmatched Numbers -----
-        unmatched=[]
-        for i,row in df_out.iterrows():
-            nums = row["All Numbers"]
-            ref_nom = row["Reference Nominal"]
-            tol_mag = float(row["Reference Tolerance"].replace("+/- ",""))
+        # ===== Excel Export with Colors =====
+        def create_colored_excel(df):
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "Results"
 
-            remain=[]
-            for v in nums:
-                if approx_equal(v, ref_nom, eps):
-                    continue
-                if approx_equal(v, +tol_mag, eps) or approx_equal(v, -tol_mag, eps):
-                    continue
-                remain.append(v)
+            # header
+            ws.append(df.columns.tolist())
 
-            unmatched.append(", ".join([str(round(x,3)) for x in remain]) if remain else "")
+            green = PatternFill(start_color="C6F7C6", end_color="C6F7C6", fill_type="solid")
+            red   = PatternFill(start_color="FFB3B3", end_color="FFB3B3", fill_type="solid")
 
-        df_out["Unmatched Numbers"] = unmatched
-        df_out = df_out.drop(columns=["All Numbers"])
+            for row_idx, row_data in df.iterrows():
+                excel_row = []
+                for col in df.columns:
+                    excel_row.append(row_data[col])
+                ws.append(excel_row)
 
-        # ----- Coloring -----
-        def color_yes_no(val):
-            if val == "Yes":
-                return "background-color:#c6f7c6; color:black;"
-            else:
-                return "background-color:#ffb3b3; color:black;"
+                # apply colors
+                excel_r = row_idx + 2   # +1 for header, +1 because openpyxl starts at 1
 
-        styled = df_out.style.applymap(color_yes_no, subset=["Nominal Found","Tolerance Found"])
+                # Nominal Found
+                cell = ws.cell(excel_r, df.columns.get_loc("Nominal Found")+1)
+                cell.fill = green if row_data["Nominal Found"] == "Yes" else red
+
+                # Tolerance Found
+                cell = ws.cell(excel_r, df.columns.get_loc("Tolerance Found")+1)
+                cell.fill = green if row_data["Tolerance Found"] == "Yes" else red
+
+            output = io.BytesIO()
+            wb.save(output)
+            return output.getvalue()
 
         st.write("### 📊 Results")
-        st.dataframe(styled, use_container_width=True)
+        st.dataframe(df_out, use_container_width=True)
 
-        st.download_button("⬇️ Download CSV",
-                           df_out.to_csv(index=False),
-                           "cod_comparison_results.csv",
-                           "text/csv")
+        excel_data = create_colored_excel(df_out)
+
+        st.download_button(
+            "⬇️ Download Excel (with colors)",
+            excel_data,
+            "cod_comparison_results.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
     else:
         st.warning("No matches found.")
