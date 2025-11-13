@@ -10,6 +10,25 @@ from openpyxl.styles import PatternFill
 # ==============================
 st.set_page_config(page_title="COD Compare", layout="wide")
 
+logo_url = "https://raw.githubusercontent.com/Uthraa-18/cod-compare-app/refs/heads/main/image.png"
+
+st.markdown(f"""
+<style>
+    /* Background Image */
+    .stApp {{
+        background: url("{logo_url}") no-repeat center fixed;
+        background-size: 40%;
+        opacity: 0.50;          /* Transparency */
+    }}
+
+    /* Keep app content fully visible */
+    .stApp > div:first-child {{
+        opacity: 1 !important;
+    }}
+</style>
+""", unsafe_allow_html=True)
+
+
 st.markdown("""
 <style>
 .section-title {
