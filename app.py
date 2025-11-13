@@ -18,8 +18,7 @@ st.markdown(f"""
     position: fixed;
     top: 50px;
     right: 20px;
-    width: 120px;   
-    opacity: 0.5;           /* 50% transparency */
+    width: 120px; 
     z-index: 9999;          /* stay above everything */
 }}
 </style>
