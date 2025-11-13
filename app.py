@@ -221,7 +221,7 @@ def fmt_pm(m):
 # ==============================
 # App UI
 # ==============================
-st.title("🔎 COD Nominal & Tolerance Comparison")
+st.title("🔎 COD, PDJ, TCM Automatic Validation")
 
 header_with_tip("What this does",
                 "Extracts Nominal & Tolerance from COD and compares PDJ/TCM rows.")
@@ -392,7 +392,7 @@ if cod_file and other_files:
         excel_data = create_colored_excel(df_out)
 
         st.download_button(
-            "⬇️ Download Excel (with colors)",
+            "⬇️ Download Excel",
             excel_data,
             "cod_comparison_results.xlsx",
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
