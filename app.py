@@ -10,7 +10,6 @@ st.set_page_config(page_title="COD Compare", layout="wide")
 
 st.markdown("""
 <style>
-/* Big section headers */
 .section-title {
   font-size: 1.35rem;
   font-weight: 700;
@@ -19,7 +18,6 @@ st.markdown("""
   gap: .5rem;
   margin: .25rem 0 .5rem 0;
 }
-/* Tiny info icon with native title tooltip */
 .info-dot {
   display:inline-block;
   font-size: 0.95rem;
@@ -30,17 +28,14 @@ st.markdown("""
   color: #333;
   cursor: help;
 }
-/* Smaller, subtle sub-heading (Compared Key) */
 .subtle {
   font-size: 0.95rem;
   color: #555;
   margin-top: .25rem;
 }
-/* Tighten up the epsilon row a bit */
 .small-input .stNumberInput > div > div > input {
   font-size: .9rem;
 }
-/* Make data table fit nicely */
 .block-container { padding-top: 1rem; }
 </style>
 """, unsafe_allow_html=True)
@@ -77,7 +72,9 @@ def read_all_sheets(name, file_bytes):
     xls = pd.ExcelFile(io.BytesIO(file_bytes), engine=engine)
     return {s: pd.read_excel(io.BytesIO(file_bytes), sheet_name=s, engine=engine, header=None) for s in xls.sheet_names}
 
+# ==============================
 # COD extraction helpers
+# ==============================
 def find_codification_value_below(cod_sheets, label="codification", scan_down=30):
     target = norm(label)
     for sname, df in cod_sheets.items():
@@ -135,29 +132,29 @@ def two_signed_values_below_same_column(df, start_row, col, max_rows=8):
     for rr in range(start_row+1, min(R, start_row+1+max_rows)):
         s = "" if pd.isna(df.iat[rr,col]) else str(df.iat[rr,col]).strip()
         if RE_SIGNED.match(s):
-            x = to_float(s)
-            if x is not None:
-                vals.append(x)
-        else:
-            if norm(s) in {"±","+/-"} and col+1 < df.shape[1]:
-                s2 = "" if pd.isna(df.iat[rr,col+1]) else str(df.iat[rr,col+1]).strip()
-                if RE_NUM.match(s2):
-                    x = to_float(s2)
-                    if x is not None:
-                        vals.append(+abs(x)); vals.append(-abs(x))
+            x = to_float(s); 
+            if x is not None: vals.append(x)
+        elif norm(s) in {"±","+/-"} and col+1 < df.shape[1]:
+            s2 = "" if pd.isna(df.iat[rr,col+1]) else str(df.iat[rr,col+1]).strip()
+            if RE_NUM.match(s2):
+                x = to_float(s2)
+                if x is not None:
+                    vals.append(+abs(x)); vals.append(-abs(x))
     for v in vals:
         if -v in vals:
             return +abs(v), -abs(v)
     return None, None
 
-# Numbers from PDJ/TCM
+# ==============================
+# Number extraction from PDJ/TCM rows
+# ==============================
 def row_numbers(df, r):
     nums=[]
     row=df.iloc[r,:].tolist()
     for i,v in enumerate(row):
         s = "" if pd.isna(v) else str(v)
         for m in RE_PM.findall(s):
-            x=to_float(m); 
+            x=to_float(m)
             if x is not None: nums += [+abs(x), -abs(x)]
         if norm(s) in {"±","+/-"}:
             for j in range(i+1, min(len(row), i+4)):
@@ -168,9 +165,8 @@ def row_numbers(df, r):
     for v in row:
         s="" if pd.isna(v) else str(v)
         for m in RE_NUM.findall(s):
-            x=to_float(m)
-            if x is not None:
-                nums.append(x)
+            x=to_float(m); 
+            if x is not None: nums.append(x)
     return nums
 
 def sheet_numbers(df):
@@ -189,95 +185,99 @@ def find_key_positions(df, key):
             if s==key: pos.append((r,c))
     return pos
 
-# epsilon-aware matching
-def approx_equal(a,b,tol): return a is not None and b is not None and abs(a-b) <= tol
-def contains_value_eps(nums, val, tol): return any(approx_equal(x,val,tol) for x in nums)
+# ==============================
+# Epsilon matching
+# ==============================
+def approx_equal(a,b,tol): 
+    return a is not None and b is not None and abs(a-b) <= tol
+
+def contains_value_eps(nums, val, tol):
+    return any(approx_equal(x,val,tol) for x in nums)
+
 def contains_pm_pair_eps(nums, mag, tol):
-    return any(approx_equal(x,+abs(mag),tol) for x in nums) and any(approx_equal(x,-abs(mag),tol) for x in nums)
+    return any(approx_equal(x,+abs(mag),tol) for x in nums) and \
+           any(approx_equal(x,-abs(mag),tol) for x in nums)
 
 def fmt_pm(m):
     s=f"{abs(m):.2f}".rstrip("0").rstrip(".")
     return f"+/- {s}"
 
 # ==============================
-# App
+# App UI
 # ==============================
-st.title("🔎 COD Nominal & Tolerance Comparison")
+st.title("🔎 COD, PDJ, TCM Automatic Validation")
 
-# --- What this does (short) ---
 header_with_tip(
     "What this does",
-    "Reads Nominal from 'Objectif → Nominal → Jeu' and tolerance from 'Calcul → Disp.' in COD, then checks PDJ row / TCM sheet for the same values."
+    "Reads Nominal & Tolerance from COD (strict stacked headers) and checks PDJ/TCM rows for matches."
 )
-st.caption("Exact match with epsilon (so 1.41 ≈ 1.4).")
+st.caption("Epsilon allows 1.41 ≈ 1.4")
 
-# Epsilon control (small)
 with st.container():
     st.markdown("<div class='small-input'>", unsafe_allow_html=True)
-    eps = st.number_input("Numeric tolerance (epsilon)", 0.0, 0.2, 0.02, 0.01,
-                          help="Lets ±1.41 match ±1.4, etc.")
+    eps = st.number_input("Numeric tolerance (epsilon)",
+                          0.0, 0.2, 0.02, 0.01,
+                          help="Lets ±1.41 match ±1.4")
     st.markdown("</div>", unsafe_allow_html=True)
 
-# --- Upload COD ---
 header_with_tip(
     "Upload COD workbook (.xls/.xlsx)",
-    "Primary reference: the app reads Codification (value below label), Nominal under 'Objectif → Nominal → Jeu', and tolerance under 'Calcul → Disp.'."
+    "Reads Codification + Nominal + Tolerance from COD file."
 )
-cod_file = st.file_uploader("", type=["xls","xlsx"], accept_multiple_files=False, key="cod")
+cod_file = st.file_uploader("", type=["xls","xlsx"], key="cod")
 
-# --- Upload others ---
 header_with_tip(
     "Upload PDJ/TCM/others",
-    "PDJ is checked on the row of the key; TCM is checked across the entire sheet; others try row then sheet."
+    "PDJ & TCM check only row of the key. Others do row-first then sheet."
 )
 other_files = st.file_uploader("", type=["xls","xlsx"], accept_multiple_files=True, key="others")
 
+# ==============================
+# Main logic
+# ==============================
 if cod_file and other_files:
     cod_bytes = cod_file.read(); cod_file.seek(0)
     try:
         cod_sheets = read_all_sheets(cod_file.name, cod_bytes)
     except Exception as e:
-        st.error(f"❌ Failed to read COD: {e}  (install: pip install xlrd==2.0.1 openpyxl)")
+        st.error(f"❌ Failed to read COD: {e}")
         st.stop()
 
-    # 1) Codification from below label
+    # --- 1) Extract Codification (value below label)
     s_cod, key_value, _, _ = find_codification_value_below(cod_sheets, "codification")
     if not key_value:
-        st.error("Couldn't find 'Codification' value (below label) in COD.")
+        st.error("Couldn't find Codification value below label.")
         st.stop()
 
-    # Smaller “Compared Key”
-    st.markdown(f"<div class='subtle'>🔑 Compared Key: <code>{key_value}</code></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='subtle'>🔑 Compared Key: <code>{key_value}</code></div>",
+                unsafe_allow_html=True)
 
     df_cod = cod_sheets[s_cod]
 
-    # 2) Nominal under Objectif → Nominal → Jeu
+    # --- 2) Nominal (Objectif → Nominal → Jeu)
     nr, nc = find_stacked_anchor_vertical(df_cod, ["objectif","nominal","jeu"], max_gap=10)
     if nr is None:
-        st.error("Couldn't locate 'Objectif → Nominal → Jeu' in COD.")
+        st.error("Couldn't locate stacked header Objectif → Nominal → Jeu in COD.")
         st.stop()
-    cod_nominal, _, _ = first_number_below(df_cod, nr, nc, right_span=12, down_rows=4)
+    cod_nominal, _, _ = first_number_below(df_cod, nr, nc)
     if cod_nominal is None:
-        st.error("Couldn't read Nominal under 'Objectif → Nominal → Jeu' in COD.")
+        st.error("Couldn't extract Nominal under that header.")
         st.stop()
 
-    # 3) Tolerance from stacked Calcul → Disp. (strict: +x and -x below)
+    # --- 3) Tolerance (Calcul → Disp) STRICT: +x & -x in same column
     tr, tc = find_stacked_anchor_vertical(df_cod, ["calcul","disp"], max_gap=10)
     if tr is None:
-        st.error("Couldn't locate 'Calcul → Disp.' stacked header in COD.")
+        st.error("Couldn't locate stacked header Calcul → Disp.")
         st.stop()
 
-    pos_val, neg_val = two_signed_values_below_same_column(df_cod, tr, tc, max_rows=8)
+    pos_val, neg_val = two_signed_values_below_same_column(df_cod, tr, tc)
     if pos_val is None or neg_val is None:
-        pm_mag, _, _ = first_number_below(df_cod, tr, tc, right_span=12, down_rows=4)
+        pm_mag, _, _ = first_number_below(df_cod, tr, tc)
         if pm_mag is None:
-            st.error("Couldn't read tolerance under 'Calcul → Disp.' in COD.")
+            st.error("Couldn't extract tolerance from COD.")
             st.stop()
         tol_mag = abs(pm_mag)
     else:
-        if not approx_equal(abs(pos_val), abs(neg_val), eps) or np.sign(pos_val) == np.sign(neg_val):
-            st.error(f"Found values under 'Calcul → Disp.' but they aren't +x and -x: {pos_val}, {neg_val}")
-            st.stop()
         tol_mag = abs(pos_val)
 
     ref_nom_disp = float(f"{cod_nominal:.2f}")
@@ -287,31 +287,46 @@ if cod_file and other_files:
     st.write(f"**Reference Tolerance (COD):** {fmt_pm(ref_tol_disp)}")
     st.caption(f"Epsilon used: {eps}")
 
-    # 4) Compare
+    # ==============================
+    # 4) Compare with all other workbooks
+    # ==============================
     results=[]
     for f in other_files:
         f_bytes = f.read(); f.seek(0)
+
         try:
             sheets = read_all_sheets(f.name, f_bytes)
         except Exception as e:
-            st.warning(f"⚠️ Skipping {f.name}: {e}")
+            st.warning(f"Skipping {f.name}: {e}")
             continue
 
-        tag=f.name
+        tag = f.name
         is_pdj = tag.upper().startswith("PDJ")
         is_tcm = tag.upper().startswith("TCM")
 
         for sname, df in sheets.items():
+
             pos = find_key_positions(df, key_value)
-            if not pos: continue
+            if not pos: 
+                continue
+
+            # For each row where key appears
             for (r, _) in pos:
+
+                # ==============================
+                # IMPORTANT FIX:
+                # TCM must behave like PDJ: only check the row where key appears
+                # ==============================
                 if is_pdj:
                     nums = row_numbers(df, r)
+
                 elif is_tcm:
-                    nums = sheet_numbers(df)
+                    nums = row_numbers(df, r)   # <<< FIXED HERE (previously sheet_numbers)
+
                 else:
                     row_nums = row_numbers(df, r)
-                    if contains_value_eps(row_nums, cod_nominal, eps) or contains_pm_pair_eps(row_nums, tol_mag, eps):
+                    if contains_value_eps(row_nums, cod_nominal, eps) or \
+                       contains_pm_pair_eps(row_nums, tol_mag, eps):
                         nums = row_nums
                     else:
                         nums = sheet_numbers(df)
@@ -319,7 +334,7 @@ if cod_file and other_files:
                 nominal_ok = contains_value_eps(nums, cod_nominal, eps)
                 tol_ok     = contains_pm_pair_eps(nums, tol_mag, eps)
 
-                matched = []
+                matched=[]
                 if nominal_ok: matched.append(f"{ref_nom_disp}")
                 if tol_ok:     matched.append(fmt_pm(ref_tol_disp))
 
@@ -335,15 +350,16 @@ if cod_file and other_files:
                     "Matched Numbers": ", ".join(matched)
                 })
 
+    # ==============================
+    # Final Output
+    # ==============================
     if results:
         df_out = pd.DataFrame(results)
         st.write("### 📊 Results")
         st.dataframe(df_out, use_container_width=True)
-        st.download_button(
-            "⬇️ Download results (CSV)",
-            data=df_out.to_csv(index=False),
-            file_name="cod_comparison_results.csv",
-            mime="text/csv",
-        )
+        st.download_button("⬇️ Download results (CSV)",
+                           df_out.to_csv(index=False),
+                           "cod_comparison_results.csv",
+                           "text/csv")
     else:
-        st.warning("The key was not found in any of the uploaded files.")
+        st.warning("No matches found in uploaded files.")
