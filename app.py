@@ -14,17 +14,23 @@ logo_url = "https://raw.githubusercontent.com/Uthraa-18/cod-compare-app/refs/hea
 
 st.markdown(f"""
 <style>
-    /* Background Image */
-    .stApp {{
-        background: url("{logo_url}") no-repeat center fixed;
+
+    /* Create a transparent background layer */
+    .stApp::before {{
+        content: "";
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-image: url("{logo_url}");
         background-size: 40%;
-        opacity: 0.20;          /* Transparency */
+        background-repeat: no-repeat;
+        background-position: center;
+        opacity: 0.5;   /* <-- 50% transparency only for image */
+        z-index: -1;    /* Behind everything */
     }}
 
-    /* Keep app content fully visible */
-    .stApp > div:first-child {{
-        opacity: 1 !important;
-    }}
 </style>
 """, unsafe_allow_html=True)
 
