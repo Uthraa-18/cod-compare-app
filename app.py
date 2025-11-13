@@ -138,16 +138,17 @@ def two_signed_values_below_same_column(df, start_row, col, max_rows=8):
     vals=[]
     for rr in range(start_row+1, min(R, start_row+1+max_rows)):
         s = "" if pd.isna(df.iat[rr,col]) else str(df.iat[rr,col]).strip()
+
         if RE_SIGNED.match(s):
             x = to_float(s)
-            if x is not None: vals.append(x)
-        elif norm(s) in {"±","+/-"}:
-            if col+1 < df.shape[1]:
-                s2 = "" if pd.isna(df.iat[rr,col+1]) else str(df.iat[rr,col+1])
-                if RE_NUM.match(s2):
-                    x = to_float(s2)
-                    if x:
-                        vals.append(+abs(x)); vals.append(-abs(x))
+            if x is not None:
+                vals.append(x)
+        elif norm(s) in {"±","+/-"} and col+1 < df.shape[1]:
+            s2 = "" if pd.isna(df.iat[rr,col+1]) else str(df.iat[rr,col+1]).strip()
+            if RE_NUM.match(s2):
+                x = to_float(s2)
+                if x:
+                    vals.append(+abs(x)); vals.append(-abs(x))
 
     for v in vals:
         if -v in vals:
@@ -205,12 +206,12 @@ def approx_equal(a,b,tol):
     return abs(a-b) <= tol
 
 def contains_value_eps(nums, val, tol):
-    return any(approx_equal(x,val,tol) for x in nums)
+    return any( approx_equal(x,val,tol) for x in nums )
 
 def contains_pm_pair_eps(nums, mag, tol):
     return (
-        any(approx_equal(x,+abs(mag),tol) for x in nums) and
-        any(approx_equal(x,-abs(mag),tol) for x in nums)
+        any( approx_equal(x,+abs(mag),tol) for x in nums ) and
+        any( approx_equal(x,-abs(mag),tol) for x in nums )
     )
 
 def fmt_pm(m):
@@ -224,7 +225,6 @@ st.title("🔎 COD Nominal & Tolerance Comparison")
 
 header_with_tip("What this does",
                 "Extracts Nominal & Tolerance from COD and compares PDJ/TCM rows.")
-
 st.caption("Epsilon allows 1.41 ≈ 1.4")
 
 with st.container():
@@ -235,11 +235,11 @@ with st.container():
     st.markdown("</div>", unsafe_allow_html=True)
 
 header_with_tip("Upload COD workbook (.xls/.xlsx)",
-                "Reads Codification, Nominal, and Tolerance.")
+                "Reads Codification, Nominal & Tolerance.")
 cod_file = st.file_uploader("", type=["xls","xlsx"], key="cod")
 
 header_with_tip("Upload PDJ/TCM/others",
-                "PDJ + TCM only check the key row. Others row-first then sheet.")
+                "PDJ + TCM → Only check row of key.")
 other_files = st.file_uploader("", type=["xls","xlsx"], accept_multiple_files=True, key="others")
 
 # ==============================
@@ -347,6 +347,18 @@ if cod_file and other_files:
 
         df_out = pd.DataFrame(results)
 
+        # ------- Streamlit Coloring -------
+        def color_yes_no(val):
+            if val == "Yes":
+                return "background-color:#C6F7C6; color:black;"
+            else:
+                return "background-color:#FFB3B3; color:black;"
+
+        styled_df = df_out.style.applymap(color_yes_no, subset=["Nominal Found", "Tolerance Found"])
+
+        st.write("### 📊 Results")
+        st.dataframe(styled_df, use_container_width=True)
+
         # ===== Excel Export with Colors =====
         def create_colored_excel(df):
             wb = Workbook()
@@ -360,13 +372,10 @@ if cod_file and other_files:
             red   = PatternFill(start_color="FFB3B3", end_color="FFB3B3", fill_type="solid")
 
             for row_idx, row_data in df.iterrows():
-                excel_row = []
-                for col in df.columns:
-                    excel_row.append(row_data[col])
+                excel_row = [row_data[col] for col in df.columns]
                 ws.append(excel_row)
 
-                # apply colors
-                excel_r = row_idx + 2   # +1 for header, +1 because openpyxl starts at 1
+                excel_r = row_idx + 2
 
                 # Nominal Found
                 cell = ws.cell(excel_r, df.columns.get_loc("Nominal Found")+1)
@@ -379,9 +388,6 @@ if cod_file and other_files:
             output = io.BytesIO()
             wb.save(output)
             return output.getvalue()
-
-        st.write("### 📊 Results")
-        st.dataframe(df_out, use_container_width=True)
 
         excel_data = create_colored_excel(df_out)
 
