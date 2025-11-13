@@ -15,27 +15,17 @@ logo_url = "https://raw.githubusercontent.com/<username>/<repo>/main/<path>/rena
 st.markdown(f"""
 <style>
 
-    /* Add background only to main container */
-    .st-emotion-cache-18ni7ap {{
-        position: relative;
-    }}
-
-    .st-emotion-cache-18ni7ap::before {{
-        content: "";
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background-image: url("{logo_url}");
-        background-size: 40%;
-        background-repeat: no-repeat;
-        background-position: center;
-        opacity: 0.5;      /* Only the image is transparent */
-        z-index: -1;       /* Push behind app */
-    }}
-
+ .corner-logo {{
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    width: 120px;           /* adjust size */
+    opacity: 0.5;           /* 50% transparency */
+    z-index: 9999;          /* stay above everything */
+}}
 </style>
+
+<img src="{logo_url}" class="corner-logo">
 """, unsafe_allow_html=True)
 
 
