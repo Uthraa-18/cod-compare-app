@@ -3,67 +3,410 @@ import pandas as pd
 import numpy as np
 import os, io, re, unicodedata
 
-# ============================================================
-# SAME CODE AS BEFORE… (all imports, css, helpers unchanged)
-# ============================================================
+# ==============================
+# Style & helpers (UI)
+# ==============================
+st.set_page_config(page_title="COD Compare", layout="wide")
 
-# (Your existing long block remains unchanged until the results section)
+st.markdown("""
+<style>
+.section-title {
+  font-size: 1.35rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: .5rem;
+  margin: .25rem 0 .5rem 0;
+}
+.info-dot {
+  display:inline-block;
+  font-size: 0.95rem;
+  line-height: 1;
+  padding: .1rem .35rem;
+  border-radius: 999px;
+  border: 1px solid #aaa;
+  color: #333;
+  cursor: help;
+}
+.subtle {
+  font-size: 0.95rem;
+  color: #555;
+  margin-top: .25rem;
+}
+.small-input .stNumberInput > div > div > input {
+  font-size: .9rem;
+}
+.block-container { padding-top: 1rem; }
+</style>
+""", unsafe_allow_html=True)
+
+def header_with_tip(text: str, tip: str):
+    st.markdown(
+        f"<div class='section-title'>{text}"
+        f"<span class='info-dot' title='{tip}'>ⓘ</span></div>",
+        unsafe_allow_html=True
+    )
 
 # ==============================
-# Final Output
+# Regex & utilities
 # ==============================
+RE_PM    = re.compile(r'(?:±|\+/-)\s*(\d+(?:[.,]\d+)?)', re.I)
+RE_SIGNED= re.compile(r'^[\+\-]?\s*\d+(?:[.,]\d+)?$')
+RE_NUM   = re.compile(r'[-+]?\d+(?:[.,]\d+)?')
+
+def to_float(x):
+    try: return float(str(x).replace(",", "."))
+    except: return None
+
+def norm(s):
+    if s is None or (isinstance(s, float) and pd.isna(s)): return ""
+    s = str(s)
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    return s.lower().strip().replace("’","'")
+
+def get_ext(name): 
+    return os.path.splitext(name)[-1].lower()
+
+def read_all_sheets(name, file_bytes):
+    engine = "xlrd" if get_ext(name)==".xls" else "openpyxl"
+    xls = pd.ExcelFile(io.BytesIO(file_bytes), engine=engine)
+    return {s: pd.read_excel(io.BytesIO(file_bytes), sheet_name=s, engine=engine, header=None)
+            for s in xls.sheet_names}
+
+# ==============================
+# COD extraction helpers
+# ==============================
+def find_codification_value_below(cod_sheets, label="codification", scan_down=30):
+    target = norm(label)
+    for sname, df in cod_sheets.items():
+        R,C = df.shape
+        for r in range(R):
+            for c in range(C):
+                if norm(df.iat[r,c]) == target:
+                    for rr in range(r+1, min(R, r+1+scan_down)):
+                        if norm(df.iat[rr,c]) != "":
+                            return sname, str(df.iat[rr,c]).strip(), r, c
+    return None, None, None, None
+
+def find_stacked_anchor_vertical(df, words, max_gap=10):
+    R,C = df.shape
+    W = [w.lower() for w in words]
+    for c in range(C):
+        starts = [r for r in range(R) if W[0] in norm(df.iat[r,c])]
+        for r0 in starts:
+            rcur = r0
+            ok = True
+            for w in W[1:]:
+                found = False
+                for rr in range(rcur+1, min(R, rcur+1+max_gap)):
+                    if w in norm(df.iat[rr,c]):
+                        rcur = rr
+                        found = True
+                        break
+                if not found:
+                    ok = False
+                    break
+            if ok:
+                return rcur, c
+    return None, None
+
+def first_number_below(df, start_row, col, right_span=12, down_rows=4):
+    R,C = df.shape
+    for rr in range(start_row+1, min(R, start_row+1+down_rows)):
+        for cc in range(col, min(C, col+right_span)):
+            s = "" if pd.isna(df.iat[rr,cc]) else str(df.iat[rr,cc])
+
+            # ± pattern
+            m = RE_PM.search(s)
+            if m:
+                v = to_float(m.group(1))
+                if v is not None: 
+                    return v, rr, cc
+
+            # ± + number in next cell
+            if norm(s) in {"±","+/-"}:
+                for cc2 in range(cc+1, min(C, cc+4)):
+                    s2 = "" if pd.isna(df.iat[rr,cc2]) else str(df.iat[rr,cc2])
+                    m2 = RE_NUM.search(s2)
+                    if m2:
+                        v = to_float(m2.group(0))
+                        if v is not None: 
+                            return v, rr, cc2
+
+            # plain number
+            m3 = RE_NUM.search(s)
+            if m3:
+                v = to_float(m3.group(0))
+                if v is not None:
+                    return v, rr, cc
+    return None, None, None
+
+def two_signed_values_below_same_column(df, start_row, col, max_rows=8):
+    R,_ = df.shape
+    vals=[]
+    for rr in range(start_row+1, min(R, start_row+1+max_rows)):
+        s = "" if pd.isna(df.iat[rr,col]) else str(df.iat[rr,col]).strip()
+
+        if RE_SIGNED.match(s):
+            x = to_float(s)
+            if x is not None:
+                vals.append(x)
+
+        elif norm(s) in {"±","+/-"} and col+1 < df.shape[1]:
+            s2 = "" if pd.isna(df.iat[rr,col+1]) else str(df.iat[rr,col+1]).strip()
+            if RE_NUM.match(s2):
+                x = to_float(s2)
+                if x:
+                    vals.append(+abs(x))
+                    vals.append(-abs(x))
+
+    for v in vals:
+        if -v in vals:
+            return +abs(v), -abs(v)
+    return None, None
+
+# ==============================
+# Extract numbers from PDJ/TCM rows
+# ==============================
+def row_numbers(df, r):
+    nums=[]
+    row=df.iloc[r,:].tolist()
+
+    # ± style
+    for i,v in enumerate(row):
+        s = "" if pd.isna(v) else str(v)
+        for m in RE_PM.findall(s):
+            x = to_float(m)
+            if x: nums += [+abs(x), -abs(x)]
+
+        if norm(s) in {"±","+/-"}:
+            for j in range(i+1, min(len(row), i+4)):
+                s2 = "" if pd.isna(row[j]) else str(row[j])
+                for m2 in RE_NUM.findall(s2):
+                    x = to_float(m2)
+                    if x: nums += [+abs(x), -abs(x)]
+
+    # plain numbers
+    for v in row:
+        s = "" if pd.isna(v) else str(v)
+        for m in RE_NUM.findall(s):
+            x = to_float(m)
+            if x is not None:
+                nums.append(x)
+
+    return nums
+
+def sheet_numbers(df):
+    nums=[]
+    for rr in range(df.shape[0]):
+        nums += row_numbers(df, rr)
+    return nums
+
+def find_key_positions(df, key):
+    key = str(key).strip()
+    pos=[]
+    R,C = df.shape
+    for r in range(R):
+        for c in range(C):
+            s = "" if pd.isna(df.iat[r,c]) else str(df.iat[r,c]).strip()
+            if s == key:
+                pos.append((r,c))
+    return pos
+
+# ==============================
+# Matching helpers
+# ==============================
+def approx_equal(a,b,tol): 
+    return abs(a-b) <= tol
+
+def contains_value_eps(nums, val, tol):
+    return any( approx_equal(x,val,tol) for x in nums )
+
+def contains_pm_pair_eps(nums, mag, tol):
+    return (
+        any( approx_equal(x,+abs(mag),tol) for x in nums ) and
+        any( approx_equal(x,-abs(mag),tol) for x in nums )
+    )
+
+def fmt_pm(m):
+    s = f"{abs(m):.2f}".rstrip("0").rstrip(".")
+    return f"+/- {s}"
+
+# ==============================
+# App UI
+# ==============================
+st.title("🔎 COD Nominal & Tolerance Comparison")
+
+header_with_tip("What this does",
+                "Extracts Nominal & Tolerance from COD and compares PDJ/TCM rows for the same key.")
+
+st.caption("Epsilon allows 1.41 ≈ 1.4")
+
+with st.container():
+    st.markdown("<div class='small-input'>", unsafe_allow_html=True)
+    eps = st.number_input("Numeric tolerance (epsilon)",
+                          0.0,0.2,0.02,0.01,
+                          help="Lets ±1.41 match ±1.4")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+header_with_tip("Upload COD workbook (.xls/.xlsx)",
+                "Reads Codification (below label), Nominal, and Tolerance.")
+cod_file = st.file_uploader("", type=["xls","xlsx"], key="cod")
+
+header_with_tip("Upload PDJ/TCM/others",
+                "PDJ + TCM → only check the key row. Others → row first, then sheet.")
+other_files = st.file_uploader("", type=["xls","xlsx"], accept_multiple_files=True, key="others")
+
+
+# ==============================
+# Main logic
+# ==============================
+if cod_file and other_files:
+
+    # Read COD
+    cod_bytes = cod_file.read(); cod_file.seek(0)
+    cod_sheets = read_all_sheets(cod_file.name, cod_bytes)
+
+    # ---- 1) Extract Codification
+    s_cod, key_value, _, _ = find_codification_value_below(cod_sheets,"codification")
+    if not key_value:
+        st.error("Could not find Codification value below label.")
+        st.stop()
+
+    st.markdown(f"<div class='subtle'>🔑 Compared Key: <code>{key_value}</code></div>",
+                unsafe_allow_html=True)
+
+    df_cod = cod_sheets[s_cod]
+
+    # ---- 2) Extract Nominal
+    nr, nc = find_stacked_anchor_vertical(df_cod, ["objectif","nominal","jeu"])
+    if nr is None:
+        st.error("Cannot find 'Objectif → Nominal → Jeu'")
+        st.stop()
+
+    cod_nominal, _, _ = first_number_below(df_cod, nr, nc)
+    if cod_nominal is None:
+        st.error("Could not extract Nominal.")
+        st.stop()
+
+    # ---- 3) Extract Tolerance
+    tr, tc = find_stacked_anchor_vertical(df_cod, ["calcul","disp"])
+    if tr is None:
+        st.error("Cannot find 'Calcul → Disp.'")
+        st.stop()
+
+    posv, negv = two_signed_values_below_same_column(df_cod, tr, tc)
+    if posv is None or negv is None:
+        pm, _, _ = first_number_below(df_cod, tr, tc)
+        if pm is None:
+            st.error("Could not extract Tolerance.")
+            st.stop()
+        tol_mag = abs(pm)
+    else:
+        tol_mag = abs(posv)
+
+    ref_nom_disp = float(f"{cod_nominal:.2f}")
+    ref_tol_disp = float(f"{tol_mag:.2f}")
+
+    st.write(f"**Reference Nominal (COD):** {ref_nom_disp}")
+    st.write(f"**Reference Tolerance (COD):** {fmt_pm(ref_tol_disp)}")
+
+    # ============================
+    # 4) Compare with other files
+    # ============================
+    results = []
+
+    for f in other_files:
+        f_bytes = f.read(); f.seek(0)
+        sheets = read_all_sheets(f.name, f_bytes)
+
+        tag = f.name
+        is_pdj = tag.upper().startswith("PDJ")
+        is_tcm = tag.upper().startswith("TCM")
+
+        for sname, df in sheets.items():
+
+            # Key positions in this sheet
+            pos = find_key_positions(df, key_value)
+            if not pos:
+                continue
+
+            for (r, _) in pos:
+
+                # PDJ and TCM both check ONLY the row of key
+                if is_pdj or is_tcm:
+                    nums = row_numbers(df, r)
+                else:
+                    row_nums = row_numbers(df, r)
+                    if contains_value_eps(row_nums, cod_nominal, eps) or \
+                       contains_pm_pair_eps(row_nums, tol_mag, eps):
+                        nums = row_nums
+                    else:
+                        nums = sheet_numbers(df)
+
+                nominal_ok = contains_value_eps(nums, cod_nominal, eps)
+                tol_ok = contains_pm_pair_eps(nums, tol_mag, eps)
+
+                matched=[]
+                if nominal_ok: matched.append(f"{ref_nom_disp}")
+                if tol_ok:     matched.append(fmt_pm(ref_tol_disp))
+
+                results.append({
+                    "Compared Key": key_value,
+                    "File": tag,
+                    "Sheet": sname,
+                    "Key Row": r+1,
+                    "All Numbers": nums,           # used later for unmatched
+                    "Reference Nominal": ref_nom_disp,
+                    "Reference Tolerance": fmt_pm(ref_tol_disp),
+                    "Nominal Found": "Yes" if nominal_ok else "No",
+                    "Tolerance Found": "Yes" if tol_ok else "No",
+                    "Matched Numbers": ", ".join(matched)
+                })
+
+    # ============================
+    # 5) Final Table
+    # ============================
     if results:
+
         df_out = pd.DataFrame(results)
 
-        # ============================================================
-        # NEW: Compute Unmatched Numbers column
-        # ============================================================
-        unmatched_list = []
-        for row in results:
-            # All numbers found during processing
-            file = row["File"]
-            sheet = row["Sheet"]
-            key_row = row["Key Row"]
-
-            # Retrieve the dataframe again
-            df_target = read_all_sheets(file, open(file, "rb").read())[sheet]
-            nums_row = row_numbers(df_target, key_row - 1)
-
-            # Remove nominal and tolerance matched values
+        # ----- Build Unmatched Numbers -----
+        unmatched=[]
+        for i,row in df_out.iterrows():
+            nums = row["All Numbers"]
             ref_nom = row["Reference Nominal"]
-            ref_tol = float(row["Reference Tolerance"].replace("+/- ", ""))
+            tol_mag = float(row["Reference Tolerance"].replace("+/- ",""))
 
-            remaining = []
-            for val in nums_row:
-                if approx_equal(val, ref_nom, eps):
+            remain=[]
+            for v in nums:
+                if approx_equal(v, ref_nom, eps):
                     continue
-                if approx_equal(val, +ref_tol, eps) or approx_equal(val, -ref_tol, eps):
+                if approx_equal(v, +tol_mag, eps) or approx_equal(v, -tol_mag, eps):
                     continue
-                remaining.append(val)
+                remain.append(v)
 
-            unmatched_list.append(", ".join([str(round(x, 3)) for x in remaining]) if remaining else "")
+            unmatched.append(", ".join([str(round(x,3)) for x in remain]) if remain else "")
 
-        df_out["Unmatched Numbers"] = unmatched_list
+        df_out["Unmatched Numbers"] = unmatched
+        df_out = df_out.drop(columns=["All Numbers"])
 
-        # ============================================================
-        # NEW: Color YES/NO columns (Nominal Found, Tolerance Found)
-        # ============================================================
+        # ----- Coloring -----
         def color_yes_no(val):
             if val == "Yes":
-                return "background-color: #b6f3b6; color: black;"   # light green
+                return "background-color:#c6f7c6; color:black;"
             else:
-                return "background-color: #ffb3b3; color: black;"   # light red
+                return "background-color:#ffb3b3; color:black;"
 
-        styled = df_out.style.applymap(color_yes_no, subset=["Nominal Found", "Tolerance Found"])
+        styled = df_out.style.applymap(color_yes_no, subset=["Nominal Found","Tolerance Found"])
 
         st.write("### 📊 Results")
         st.dataframe(styled, use_container_width=True)
 
-        st.download_button(
-            "⬇️ Download results (CSV)",
-            df_out.to_csv(index=False),
-            "cod_comparison_results.csv",
-            "text/csv",
-        )
+        st.download_button("⬇️ Download CSV",
+                           df_out.to_csv(index=False),
+                           "cod_comparison_results.csv",
+                           "text/csv")
     else:
-        st.warning("No matches found in uploaded files.")
+        st.warning("No matches found.")
