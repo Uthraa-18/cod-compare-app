@@ -18,7 +18,7 @@ st.markdown(f"""
     .stApp {{
         background: url("{logo_url}") no-repeat center fixed;
         background-size: 40%;
-        opacity: 0.50;          /* Transparency */
+        opacity: 0.20;          /* Transparency */
     }}
 
     /* Keep app content fully visible */
